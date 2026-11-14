@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "771360572188",
+    "project_id": "kirana-shop-app-be084",
+    "storage_bucket": "kirana-shop-app-be084.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:771360572188:android:bc317d3405db73b725b0d9",
+        "android_client_info": {
+          "package_name": "com.example.shop_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDuS7VIPX2Gcpbgtp01GP6rWNX3s32W5rs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

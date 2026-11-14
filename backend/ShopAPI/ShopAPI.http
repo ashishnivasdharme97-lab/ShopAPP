@@ -1,0 +1,24 @@
+@ShopAPI_HostAddress = http://localhost:5023
+@token = replace-with-a-valid-jwt
+@userId = 1
+
+### Create an Udhar entry
+POST {{ShopAPI_HostAddress}}/api/udhar
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "userId": {{userId}},
+  "customerName": "Rahul Patil",
+  "amount": 1500.00,
+  "remainingAmount": 1000.00,
+  "dueDate": "2026-12-01T00:00:00Z",
+  "notes": "Grocery bill",
+  "isPaid": false,
+  "paidAmount": 500.00
+}
+
+### List Udhar entries belonging to a user
+GET {{ShopAPI_HostAddress}}/api/udhar/user/{{userId}}
+Authorization: Bearer {{token}}
+Accept: application/json
