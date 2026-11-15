@@ -53,7 +53,6 @@ class _UdhariScreenState extends State<UdhariScreen> {
       ),
       body: Column(
         children: [
-          // TOTAL CARD
           Container(
             width: double.infinity,
             margin: const EdgeInsets.fromLTRB(18, 8, 18, 16),
@@ -107,7 +106,6 @@ class _UdhariScreenState extends State<UdhariScreen> {
               ],
             ),
           ),
-
           const Padding(
             padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
             child: Align(
@@ -122,8 +120,6 @@ class _UdhariScreenState extends State<UdhariScreen> {
               ),
             ),
           ),
-
-          // HISTORY LIST
           Expanded(
             child: controller.isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -161,7 +157,7 @@ class _UdhariScreenState extends State<UdhariScreen> {
                                   ),
                                   SizedBox(height: 5),
                                   Text(
-                                    "Search with your registered name to view your credit activity.",
+                                    "Bills with an outstanding balance will appear here.",
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       color: Color(0xff8995A8),
@@ -172,98 +168,153 @@ class _UdhariScreenState extends State<UdhariScreen> {
                               ),
                             ),
                           )
-                        : ListView.builder(
-                            itemCount: controller.entries.length,
-                            itemBuilder: (context, index) {
-                              final item = controller.entries[index];
+                        : RefreshIndicator(
+                            onRefresh: _loadUdhari,
+                            child: ListView.builder(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              itemCount: controller.entries.length,
+                              itemBuilder: (context, index) {
+                                final item = controller.entries[index];
+                                final billReference =
+                                    item.billReference.isNotEmpty
+                                        ? item.billReference
+                                        : item.billId;
 
-                              return Container(
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 6,
-                                ),
-                                padding: const EdgeInsets.all(15),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(17),
-                                  border: Border.all(
-                                      color: const Color(0xffE9EDF2)),
-                                  boxShadow: const [
-                                    BoxShadow(
-                                      blurRadius: 10,
-                                      color: Color(0x080E1B2A),
-                                      offset: Offset(0, 3),
+                                return Container(
+                                  margin: const EdgeInsets.symmetric(
+                                    horizontal: 18,
+                                    vertical: 6,
+                                  ),
+                                  padding: const EdgeInsets.all(15),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(17),
+                                    border: Border.all(
+                                      color: const Color(0xffE9EDF2),
                                     ),
-                                  ],
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 42,
-                                      height: 42,
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xffFDEEEE),
-                                        borderRadius: BorderRadius.circular(14),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        blurRadius: 10,
+                                        color: Color(0x080E1B2A),
+                                        offset: Offset(0, 3),
                                       ),
-                                      child: Icon(
-                                        Icons.south_west_rounded,
-                                        color: const Color(0xffD64B4B),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        width: 42,
+                                        height: 42,
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xffFDEEEE),
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                        ),
+                                        child: const Icon(
+                                          Icons.receipt_long_rounded,
+                                          color: Color(0xffD64B4B),
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            item.reason.isEmpty
-                                                ? 'Udhari'
-                                                : item.reason,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              color: Color(0xff243344),
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w700,
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              billReference.isEmpty
+                                                  ? 'Bill'
+                                                  : 'Bill $billReference',
+                                              style: const TextStyle(
+                                                color: Color(0xff243344),
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w700,
+                                              ),
                                             ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            "${item.createdAt.day}/${item.createdAt.month}/${item.createdAt.year}",
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              color: Color(0xff8995A8),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              item.customerName,
+                                              style: const TextStyle(
+                                                color: Color(0xff8995A8),
+                                                fontSize: 13,
+                                              ),
                                             ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            item.status,
-                                            style: const TextStyle(
-                                              fontSize: 11,
-                                              color: Color(0xff8995A8),
+                                            const SizedBox(height: 8),
+                                            _amountLine(
+                                              'Total',
+                                              item.totalAmount,
                                             ),
-                                          ),
-                                        ],
+                                            _amountLine(
+                                              'Paid',
+                                              item.paidAmount,
+                                            ),
+                                            _amountLine(
+                                              'Remaining',
+                                              item.remainingAmount,
+                                              emphasize: true,
+                                            ),
+                                            const SizedBox(height: 5),
+                                            Text(
+                                              'Due: ${_formatDate(item.dueDate)}',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                color: Color(0xff8995A8),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      "+ ₹${item.amount.toStringAsFixed(2)}",
-                                      style: const TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w800,
-                                        color: Color(0xffD64B4B),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
                           ),
           ),
         ],
       ),
     );
+  }
+
+  Widget _amountLine(
+    String label,
+    double amount, {
+    bool emphasize = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: emphasize
+                    ? const Color(0xffD64B4B)
+                    : const Color(0xff8995A8),
+                fontSize: 12,
+                fontWeight: emphasize ? FontWeight.w700 : FontWeight.normal,
+              ),
+            ),
+          ),
+          Text(
+            '₹${amount.toStringAsFixed(2)}',
+            style: TextStyle(
+              color:
+                  emphasize ? const Color(0xffD64B4B) : const Color(0xff243344),
+              fontSize: 12,
+              fontWeight: emphasize ? FontWeight.w800 : FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(DateTime? date) {
+    if (date == null) return 'Not set';
+    return '${date.day}/${date.month}/${date.year}';
   }
 }

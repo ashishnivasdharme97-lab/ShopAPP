@@ -1,8 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:shop_app/controllers/auth_controller.dart';
 import 'package:shop_app/services/local_notification_service.dart';
 import 'package:shop_app/models/product_request_model.dart';
+import 'package:shop_app/models/auth_session.dart';
+import 'package:shop_app/services/notification_service.dart';
 import 'package:shop_app/services/product_request_service.dart';
 
 class AlertScreen extends StatefulWidget {
@@ -15,11 +19,15 @@ class AlertScreen extends StatefulWidget {
 class _AlertScreenState extends State<AlertScreen> {
   List<ProductRequestModel> _requests = [];
   List<LocalAppNotification> _notifications = [];
+  bool _isLoadingNotifications = false;
+  String? _notificationError;
+  late final NotificationService _notificationService;
   Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
+    _notificationService = NotificationService();
     _loadRequests();
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 20),
@@ -30,6 +38,7 @@ class _AlertScreenState extends State<AlertScreen> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _notificationService.close();
     super.dispose();
   }
 
@@ -43,15 +52,42 @@ class _AlertScreenState extends State<AlertScreen> {
     } catch (error) {
       debugPrint('USER REQUEST NOTIFICATION ERROR: $error');
     }
+    await _loadNotifications();
+  }
+
+  Future<void> _loadNotifications() async {
+    if (_isLoadingNotifications) return;
+    setState(() {
+      _isLoadingNotifications = true;
+      _notificationError = null;
+    });
     try {
-      final notifications =
+      final session = context.read<AuthController>().session;
+      if (session == null || session.role != AccountRole.user) {
+        throw const NotificationApiException(
+          'Sign in with a User account to view your notifications.',
+        );
+      }
+      final remoteNotifications =
+          await _notificationService.getMyNotifications(session);
+      final localNotifications =
           await LocalNotificationService.getForAudience('user');
       if (!mounted) return;
-      setState(() {
-        _notifications = notifications;
-      });
+      final notifications = [...remoteNotifications, ...localNotifications]
+        ..sort((first, second) => second.createdAt.compareTo(first.createdAt));
+      setState(() => _notifications = notifications);
     } catch (error) {
-      debugPrint('USER LOCAL NOTIFICATION LOAD ERROR: $error');
+      if (!mounted) return;
+      setState(() => _notificationError = error.toString());
+      try {
+        final localNotifications =
+            await LocalNotificationService.getForAudience('user');
+        if (mounted) setState(() => _notifications = localNotifications);
+      } catch (localError) {
+        debugPrint('USER LOCAL NOTIFICATION LOAD ERROR: $localError');
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingNotifications = false);
     }
   }
 
@@ -89,11 +125,13 @@ class _AlertScreenState extends State<AlertScreen> {
           'Notifications',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
         ),
-        actions: const [
-          Padding(
-            padding: EdgeInsets.only(right: 18),
-            child: Icon(Icons.notifications_active_outlined, size: 22),
+        actions: [
+          IconButton(
+            onPressed: _isLoadingNotifications ? null : _loadRequests,
+            tooltip: 'Refresh notifications',
+            icon: const Icon(Icons.refresh_rounded),
           ),
+          const SizedBox(width: 8),
         ],
       ),
       body: ListView(
@@ -149,6 +187,27 @@ class _AlertScreenState extends State<AlertScreen> {
             ),
           ),
           const SizedBox(height: 12),
+          if (_isLoadingNotifications)
+            const Padding(
+              padding: EdgeInsets.all(20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_notificationError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                _notificationError!,
+                style: const TextStyle(color: Color(0xffD64B4B)),
+              ),
+            )
+          else if (_notifications.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text(
+                'No notifications yet.',
+                style: TextStyle(color: Color(0xff8995A8)),
+              ),
+            ),
           for (final notification in _notifications) ...[
             Container(
               margin: const EdgeInsets.only(bottom: 11),

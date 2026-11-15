@@ -1,15 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:shop_app/models/auth_session.dart';
-import 'package:shop_app/models/pending_model.dart';
-import 'package:shop_app/services/pending_service.dart';
+import 'package:shop_app/models/udhari_bill_model.dart';
+import 'package:shop_app/services/udhar_service.dart';
 
 class UdhariController extends ChangeNotifier {
-  List<PendingModel> entries = [];
+  UdhariController({UdharService? service})
+      : _service = service ?? UdharService();
+
+  final UdharService _service;
+  List<UdhariBillModel> entries = [];
   bool isLoading = false;
   String? errorMessage;
 
   double get totalUdhari {
-    return entries.fold(0, (total, entry) => total + entry.amount);
+    return entries.fold(
+      0,
+      (total, entry) => total + entry.remainingAmount,
+    );
   }
 
   Future<void> loadMyEntries(AuthSession session) async {
@@ -18,7 +25,7 @@ class UdhariController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      entries = await PendingService.getPendingForUser(session);
+      entries = await _service.getMyEntries(session);
     } catch (error) {
       entries = [];
       errorMessage = error.toString();
@@ -26,5 +33,11 @@ class UdhariController extends ChangeNotifier {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    _service.close();
+    super.dispose();
   }
 }

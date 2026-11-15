@@ -109,7 +109,7 @@ class DeviceTokenService {
       headers: _headers(session),
       body: jsonEncode({'token': token}),
     );
-    if (response.statusCode != 200) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       throw DeviceTokenApiException(
         'Could not register this device (HTTP ${response.statusCode}).',
         statusCode: response.statusCode,

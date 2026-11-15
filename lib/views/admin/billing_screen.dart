@@ -4,9 +4,11 @@ import 'package:shop_app/models/auth_session.dart';
 import 'package:shop_app/models/create_sale_model.dart';
 import 'package:shop_app/models/create_pending_model.dart';
 import 'package:shop_app/models/product_model.dart';
+import 'package:shop_app/models/registered_user_model.dart';
 import 'package:shop_app/services/pdf_service.dart';
 import 'package:shop_app/services/product_service.dart';
 import 'package:shop_app/services/pending_service.dart';
+import 'package:shop_app/services/registered_user_service.dart';
 import 'package:shop_app/services/sales_service.dart';
 import 'package:shop_app/views/admin/add_product_screen.dart';
 import 'package:image_picker/image_picker.dart';
@@ -44,6 +46,7 @@ class _BillingScreenState extends State<BillingScreen> {
   //---------------- Variables ----------------//
 
   List<ProductModel> products = [];
+  List<RegisteredUserModel> registeredUsers = [];
 
   ProductModel? selectedProduct;
 
@@ -54,7 +57,17 @@ class _BillingScreenState extends State<BillingScreen> {
 
   bool showProductSuggestions = false;
   bool isLoadingProducts = true;
+  bool isLoadingRegisteredUsers = true;
+  bool isSubmittingBill = false;
   String paymentMode = "Cash";
+  String? registeredUsersError;
+  RegisteredUserModel? selectedRegisteredUser;
+  DateTime? dueDate;
+  CreateSaleModel? _retryBill;
+  List<Map<String, dynamic>>? _retryBillItems;
+
+  late final RegisteredUserService _registeredUserService;
+  late final SalesService _salesService;
 
   List<Map<String, dynamic>> billItems = [];
 
@@ -65,7 +78,10 @@ class _BillingScreenState extends State<BillingScreen> {
   @override
   void initState() {
     super.initState();
+    _registeredUserService = RegisteredUserService();
+    _salesService = SalesService();
     loadProducts();
+    loadRegisteredUsers();
     loadCustomerSuggestions();
   }
 
@@ -80,7 +96,32 @@ class _BillingScreenState extends State<BillingScreen> {
     qtyController.dispose();
     paidController.dispose();
     pendingAmountController.dispose();
+    _registeredUserService.close();
+    _salesService.close();
     super.dispose();
+  }
+
+  Future<void> loadRegisteredUsers() async {
+    setState(() {
+      isLoadingRegisteredUsers = true;
+      registeredUsersError = null;
+    });
+    try {
+      final users = await _registeredUserService.getUsers(widget.session);
+      if (!mounted) return;
+      setState(() {
+        registeredUsers = users;
+        if (selectedRegisteredUser != null &&
+            !users.any((user) => user.id == selectedRegisteredUser!.id)) {
+          selectedRegisteredUser = null;
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => registeredUsersError = error.toString());
+    } finally {
+      if (mounted) setState(() => isLoadingRegisteredUsers = false);
+    }
   }
 
   Future<void> loadCustomerSuggestions() async {
@@ -338,14 +379,14 @@ class _BillingScreenState extends State<BillingScreen> {
       return;
     }
 
-    final double rate = selectedProduct!.price;
+    final double rate = _toCurrency(selectedProduct!.price);
 
     billItems.add({
       "productId": selectedProduct!.id,
       "name": selectedProduct!.productName,
       "rate": rate,
       "qty": qty,
-      "total": rate * qty,
+      "total": _toCurrency(rate * qty),
     });
 
     calculateTotal();
@@ -553,7 +594,7 @@ class _BillingScreenState extends State<BillingScreen> {
           continue;
         }
 
-        final double rate = parsed["rate"];
+        final double rate = _toCurrency(parsed["rate"] as double);
         final int qty = parsed["qty"];
 
         // ------------------------------------------------
@@ -588,7 +629,7 @@ class _BillingScreenState extends State<BillingScreen> {
           "name": product.productName,
           "rate": rate,
           "qty": qty,
-          "total": rate * qty,
+          "total": _toCurrency(rate * qty),
         });
 
         break;
@@ -774,7 +815,7 @@ class _BillingScreenState extends State<BillingScreen> {
           ) ??
           0;
 
-      total += itemTotal;
+      total += _toCurrency(itemTotal);
     }
 
     final paid = double.tryParse(
@@ -782,10 +823,10 @@ class _BillingScreenState extends State<BillingScreen> {
         ) ??
         0;
 
-    final newRemaining = total - paid;
+    final newRemaining = _toCurrency(total - paid);
 
     setState(() {
-      grandTotal = total;
+      grandTotal = _toCurrency(total);
       remaining = newRemaining < 0 ? 0 : newRemaining;
     });
   }
@@ -798,12 +839,154 @@ class _BillingScreenState extends State<BillingScreen> {
         ) ??
         0;
 
-    final newRemaining = grandTotal - paid;
+    final newRemaining = _toCurrency(grandTotal - paid);
 
     setState(() {
       remaining = newRemaining < 0 ? 0 : newRemaining;
     });
   }
+
+  Future<void> _selectDueDate() async {
+    final now = DateTime.now();
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: dueDate ?? now,
+      firstDate: DateTime(now.year - 10),
+      lastDate: DateTime(now.year + 20),
+    );
+    if (selected != null && mounted) {
+      setState(() => dueDate = selected);
+    }
+  }
+
+  void _showBillMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _submitBill() async {
+    if (isSubmittingBill) return;
+
+    final sale = _retryBill;
+    if (sale == null) {
+      if (billItems.isEmpty) {
+        _showBillMessage('Please add at least one product.');
+        return;
+      }
+      if (selectedRegisteredUser == null) {
+        _showBillMessage('Select a registered user before creating the bill.');
+        return;
+      }
+
+      final customerName = customerController.text.trim();
+      if (customerName.isEmpty) {
+        _showBillMessage('Customer name is required.');
+        return;
+      }
+
+      final total = _toCurrency(grandTotal);
+      final paid = double.tryParse(paidController.text.trim());
+      if (total <= 0) {
+        _showBillMessage('Total amount must be greater than zero.');
+        return;
+      }
+      if (paid == null || !paid.isFinite || paid < 0) {
+        _showBillMessage('Enter a valid paid amount of zero or more.');
+        return;
+      }
+
+      final paidAmount = _toCurrency(paid);
+      if (paidAmount > total) {
+        _showBillMessage('Paid amount cannot exceed the total amount.');
+        return;
+      }
+      final udhariAmount = _toCurrency(total - paidAmount);
+      if (udhariAmount > 0 && dueDate == null) {
+        _showBillMessage('Select a due date for the pending Udhari amount.');
+        return;
+      }
+
+      try {
+        final itemSnapshot =
+            billItems.map((item) => Map<String, dynamic>.from(item)).toList();
+        _retryBill = CreateSaleModel(
+          userId: selectedRegisteredUser!.id,
+          idempotencyKey: CreateSaleModel.newIdempotencyKey(),
+          totalAmount: total,
+          paidAmount: paidAmount,
+          udhariAmount: udhariAmount,
+          dueDate: udhariAmount > 0 ? dueDate : null,
+          paymentMode: paymentMode,
+          customerName: customerName,
+          items: itemSnapshot.map((item) {
+            return SaleItemModel(
+              productId: item['productId'] as int,
+              rate: _toCurrency((item['rate'] as num).toDouble()),
+              quantity: item['qty'] as int,
+              amount: _toCurrency((item['total'] as num).toDouble()),
+            );
+          }).toList(),
+        );
+        _retryBillItems = itemSnapshot;
+      } on ArgumentError catch (error) {
+        _showBillMessage(error.message.toString());
+        return;
+      }
+    }
+
+    setState(() => isSubmittingBill = true);
+    final submittedBill = _retryBill!;
+    try {
+      final response = await _salesService.createBill(
+        submittedBill,
+        widget.session,
+      );
+      if (!mounted) return;
+
+      _retryBill = null;
+      var completionMessage = response.billNo.isEmpty
+          ? 'Bill saved successfully.'
+          : 'Bill ${response.billNo} saved successfully.';
+      try {
+        final pdf = await PdfService.generateBill(
+          items: _retryBillItems ?? billItems,
+          total: submittedBill.totalAmount,
+          paid: submittedBill.paidAmount,
+          remaining: submittedBill.udhariAmount,
+          paymentMode: submittedBill.paymentMode,
+        );
+        await Printing.layoutPdf(onLayout: (format) async => pdf);
+      } catch (error) {
+        completionMessage =
+            '$completionMessage Print preview could not be opened: $error';
+      }
+
+      billItems.clear();
+      _retryBillItems = null;
+      grandTotal = 0;
+      remaining = 0;
+      selectedProduct = null;
+      selectedRegisteredUser = null;
+      dueDate = null;
+      qtyController.clear();
+      rateController.clear();
+      paidController.clear();
+      customerController.clear();
+      productSearchController.clear();
+      filteredProducts.clear();
+      showProductSuggestions = false;
+      setState(() {});
+      _showBillMessage(completionMessage);
+    } catch (error) {
+      if (!mounted) return;
+      _showBillMessage(error.toString());
+    } finally {
+      if (mounted) setState(() => isSubmittingBill = false);
+    }
+  }
+
+  double _toCurrency(double amount) => (amount * 100).round() / 100;
 
   Widget _buildLeftPanel() {
     return Card(
@@ -1270,6 +1453,71 @@ class _BillingScreenState extends State<BillingScreen> {
             ),
             const SizedBox(height: 12),
 
+            DropdownButtonFormField<int>(
+              initialValue: selectedRegisteredUser?.id,
+              isExpanded: true,
+              decoration: fieldDecoration(
+                'Registered user *',
+                Icons.verified_user_outlined,
+              ),
+              hint: Text(
+                isLoadingRegisteredUsers
+                    ? 'Loading registered users...'
+                    : 'Select registered user',
+              ),
+              items: registeredUsers
+                  .map(
+                    (user) => DropdownMenuItem<int>(
+                      value: user.id,
+                      child: Text(
+                        '${user.name} (${user.email})',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: isSubmittingBill ||
+                      isLoadingRegisteredUsers ||
+                      _retryBill != null
+                  ? null
+                  : (userId) {
+                      RegisteredUserModel? selectedUser;
+                      for (final user in registeredUsers) {
+                        if (user.id == userId) {
+                          selectedUser = user;
+                          break;
+                        }
+                      }
+                      setState(() {
+                        selectedRegisteredUser = selectedUser;
+                      });
+                    },
+            ),
+            if (registeredUsersError != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        registeredUsersError!,
+                        style: const TextStyle(
+                          color: Color(0xffD64B4B),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed:
+                          isLoadingRegisteredUsers ? null : loadRegisteredUsers,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 12),
+
             _customerNameField(
               controller: customerController,
               focusNode: customerFocusNode,
@@ -1348,6 +1596,20 @@ class _BillingScreenState extends State<BillingScreen> {
               ),
             ),
 
+            if (_toCurrency(remaining) > 0) ...[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: isSubmittingBill ? null : _selectDueDate,
+                icon: const Icon(Icons.calendar_today_outlined),
+                label: Text(
+                  dueDate == null
+                      ? 'Select due date *'
+                      : 'Due date: ${dueDate!.day}/${dueDate!.month}/'
+                          '${dueDate!.year}',
+                ),
+              ),
+            ],
+
             const SizedBox(height: 16),
 
             SizedBox(
@@ -1373,182 +1635,36 @@ class _BillingScreenState extends State<BillingScreen> {
                 ),
               ),
             ),
+            if (_retryBill != null)
+              const Padding(
+                padding: EdgeInsets.only(top: 10),
+                child: Text(
+                  'Retry sends the same bill and registered user as before.',
+                  style: TextStyle(
+                    color: Color(0xffB76B0B),
+                    fontSize: 12,
+                  ),
+                ),
+              ),
             SizedBox(
               width: double.infinity,
               height: 51,
               child: ElevatedButton.icon(
-                onPressed: () async {
-                  if (billItems.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("Please add at least one product"),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-
-                  if (customerController.text.trim().isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("Customer name is required"),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-
-                  if (paidController.text.trim().isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("Paid amount is required"),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-
-                  final paid = double.tryParse(
-                    paidController.text.trim(),
-                  );
-
-                  if (paid == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("Enter a valid paid amount"),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-
-                  if (paid < 0) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("Paid amount cannot be negative"),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-
-                  if (paid > grandTotal) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          "Paid amount cannot be more than ₹${grandTotal.toStringAsFixed(2)}",
-                        ),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-
-                  final sale = CreateSaleModel(
-                    customerName: customerController.text.trim(),
-                    totalAmount: grandTotal,
-                    paidAmount: double.tryParse(paidController.text) ?? 0,
-                    udhariAmount: remaining,
-                    paymentMode: paymentMode,
-                    items: billItems.map((item) {
-                      return SaleItemModel(
-                        productId: item["productId"],
-                        rate: (item["rate"] as num).toDouble(),
-                        quantity: (item["qty"] as num).toInt(),
-                        amount: (item["total"] as num).toDouble(),
-                      );
-                    }).toList(),
-                  );
-
-                  // Save Sale API
-                  bool success = await SalesService.createSale(sale);
-
-                  if (!mounted) return;
-                  if (!success) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("Sale Failed"),
-                      ),
-                    );
-
-                    return;
-                  }
-
-                  _rememberCustomerName(customerController.text);
-
-                  var pendingSaved = true;
-                  if (remaining > 0) {
-                    try {
-                      pendingSaved = await PendingService.addPending(
-                        CreatePendingModel(
-                          customerName: customerController.text.trim(),
-                          amount: remaining,
-                          reason: 'Unpaid balance from bill',
-                        ),
-                      );
-                    } catch (_) {
-                      pendingSaved = false;
-                    }
-                  }
-
-                  // Generate PDF
-
-                  final pdf = await PdfService.generateBill(
-                    items: billItems,
-                    total: grandTotal,
-                    paid: double.tryParse(
-                          paidController.text,
-                        ) ??
-                        0,
-                    remaining: remaining,
-                    paymentMode: paymentMode,
-                  );
-
-                  // Open Print Preview
-
-                  await Printing.layoutPdf(
-                    onLayout: (format) async => pdf,
-                  );
-
-                  if (!mounted) return;
-
-                  // Clear Screen
-
-                  billItems.clear();
-
-                  grandTotal = 0;
-                  remaining = 0;
-
-                  selectedProduct = null;
-
-                  qtyController.clear();
-                  rateController.clear();
-                  paidController.clear();
-                  customerController.clear();
-                  productSearchController.clear();
-                  filteredProducts.clear();
-                  showProductSuggestions = false;
-
-                  setState(() {});
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        pendingSaved
-                            ? 'Bill Generated Successfully'
-                            : 'Bill saved, but its unpaid balance could not be added to Udhari.',
-                      ),
-                    ),
-                  );
-                },
+                onPressed: isSubmittingBill ? null : _submitBill,
                 icon: const Icon(Icons.receipt_long_rounded, size: 19),
-                label: const Text(
-                  "Complete sale",
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+                label: isSubmittingBill
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(
+                        _retryBill == null ? 'Complete sale' : 'Retry bill',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xff168A62),
                   foregroundColor: Colors.white,

@@ -3,12 +3,16 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shop_app/models/auth_session.dart';
+import 'package:shop_app/models/udhari_bill_model.dart';
 import 'package:shop_app/models/udhar_model.dart';
+import 'package:shop_app/services/api_config.dart';
 
 class UdharService {
   UdharService({http.Client? client, String? baseUrl})
       : _client = client ?? http.Client(),
-        _baseUrl = (baseUrl ?? _defaultBaseUrl).replaceFirst(RegExp(r'/$'), '');
+        _baseUrl = (baseUrl ?? _defaultBaseUrl).replaceFirst(RegExp(r'/$'), ''),
+        _apiBaseUrl =
+            (baseUrl ?? ApiConfig.baseUrl).replaceFirst(RegExp(r'/$'), '');
 
   static const _configuredBaseUrl =
       String.fromEnvironment('UDHAR_API_BASE_URL');
@@ -23,8 +27,34 @@ class UdharService {
 
   final http.Client _client;
   final String _baseUrl;
+  final String _apiBaseUrl;
 
   Uri get _collectionUri => Uri.parse('$_baseUrl/udhar');
+
+  Future<List<UdhariBillModel>> getMyEntries(AuthSession session) async {
+    if (session.role != AccountRole.user) {
+      throw const UdharApiException('A User account is required.');
+    }
+
+    final response = await _client.get(
+      Uri.parse('$_apiBaseUrl/Udhari/my'),
+      headers: _headers(session),
+    );
+    _checkSuccess(response, const {200});
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List) {
+      throw const UdharApiException('The Udhari API returned invalid data.');
+    }
+
+    return decoded.map((item) {
+      if (item is! Map<String, dynamic>) {
+        throw const UdharApiException(
+          'The Udhari API returned invalid entry data.',
+        );
+      }
+      return UdhariBillModel.fromJson(item);
+    }).toList();
+  }
 
   Future<UdharModel> create(UdharModel entry, AuthSession session) async {
     final response = await _client.post(

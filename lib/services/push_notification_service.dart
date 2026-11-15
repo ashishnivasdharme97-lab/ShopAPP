@@ -6,8 +6,6 @@ import 'package:shop_app/views/admin/notification_screen.dart';
 import 'package:shop_app/views/home/widgets/alert_screen.dart';
 
 class PushNotificationService {
-  static const String _announcementTopic = 'kirana_store_announcements';
-
   static final navigatorKey = GlobalKey<NavigatorState>();
   static final scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
@@ -24,13 +22,6 @@ class PushNotificationService {
     } catch (error) {
       debugPrint('FCM SUPPORT CHECK ERROR: $error');
       return;
-    }
-
-    try {
-      await messaging.requestPermission();
-      await messaging.subscribeToTopic(_announcementTopic);
-    } catch (error) {
-      debugPrint('FCM PERMISSION OR TOPIC SUBSCRIPTION ERROR: $error');
     }
 
     _foregroundSubscription ??=
